@@ -1,0 +1,47 @@
+module wallace_tree_12_rows (
+    input [47:0] pp0, pp1, pp2, pp3, pp4, pp5, 
+    input [47:0] pp6, pp7, pp8, pp9, pp10, pp11,
+    output [47:0] sum,
+    output [47:0] carry
+);
+    // Tầng 1: Nén 12 hàng -> 8 hàng (Dùng 4 bộ nén 3:2 cho mỗi bit)
+    wire [47:0] s1_0, c1_0, s1_1, c1_1, s1_2, c1_2, s1_3, c1_3;
+    
+    compressor_3_2 stage1_inst0 (pp0, pp1, pp2, s1_0, c1_0);
+    compressor_3_2 stage1_inst1 (pp3, pp4, pp5, s1_1, c1_1);
+    compressor_3_2 stage1_inst2 (pp6, pp7, pp8, s1_2, c1_2);
+    compressor_3_2 stage1_inst3 (pp9, pp10, pp11, s1_3, c1_3);
+
+    // Tầng 2: Nén 8 hàng -> 6 hàng
+    wire [47:0] s2_0, c2_0, s2_1, c2_1;
+    
+    compressor_3_2 stage2_inst0 (s1_0, c1_0, s1_1, s2_0, c2_0);
+    compressor_3_2 stage2_inst1 (c1_1, s1_2, c1_2, s2_1, c2_1);
+    // Giữ lại s1_3 và c1_3 cho tầng sau
+
+    // Tầng 3: Nén 6 hàng -> 4 hàng
+    wire [47:0] s3_0, c3_0, s3_1, c3_1;
+    
+    compressor_3_2 stage3_inst0 (s2_0, c2_0, s2_1, s3_0, c3_0);
+    compressor_3_2 stage3_inst1 (c2_1, s1_3, c1_3, s3_1, c3_1);
+
+    // Tầng 4: Nén 4 hàng -> 3 hàng
+    wire [47:0] s4_0, c4_0;
+    
+    compressor_3_2 stage4_inst0 (s3_0, c3_0, s3_1, s4_0, c4_0);
+    // Giữ lại c3_1 cho tầng sau
+
+    // Tầng 5: Nén 3 hàng -> 2 hàng (Kết quả cuối cùng)
+    compressor_3_2 stage5_inst0 (s4_0, c4_0, c3_1, sum, carry);
+
+endmodule
+
+// Module hỗ trợ: Bộ nén 3:2 (Thực chất là Full Adder 1-bit áp dụng cho vector 48-bit)
+module compressor_3_2 (
+    input [47:0] a, b, c,
+    output [47:0] s,
+    output [47:0] cy
+);
+    assign s = a ^ b ^ c;
+    assign cy = ((a & b) | (b & c) | (c & a)) << 1; // Dịch trái carry 1 bit
+endmodule

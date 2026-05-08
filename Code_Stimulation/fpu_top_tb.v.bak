@@ -1,0 +1,102 @@
+// =============================================================
+// File: fpu_top_tb.v
+// Testbench cho fpu_top.v
+// =============================================================
+`timescale 1ns/1ps
+
+module fpu_top_tb;
+
+    reg         clk  = 0;
+    reg         rst  = 1;
+    reg  [1:0]  opcode;
+    reg         start;
+    reg  [31:0] a, b;
+
+    wire [31:0] result_add, result_sub, result_mul, result_div;
+    wire        valid_div;
+    wire [31:0] result_sel;
+    wire        valid_sel;
+
+    fpu_top dut (
+        .clk        (clk),
+        .rst        (rst),
+        .opcode     (opcode),
+        .start      (start),
+        .a          (a),
+        .b          (b),
+        .result_add (result_add),
+        .result_sub (result_sub),
+        .result_mul (result_mul),
+        .result_div (result_div),
+        .valid_div  (valid_div),
+        .result_sel (result_sel),
+        .valid_sel  (valid_sel)
+    );
+
+    always #5 clk = ~clk;  // 100 MHz
+
+    task apply_op;
+        input [1:0] op;
+        input [31:0] fa, fb;
+        begin
+            @(posedge clk);
+            opcode <= op;
+            start  <= (op == 2'b11) ? 1'b1 : 1'b0;
+            a      <= fa;
+            b      <= fb;
+            @(posedge clk);
+            start  <= 1'b0;
+        end
+    endtask
+
+    integer cyc;
+
+    initial begin
+        $dumpfile("fpu_top_tb.vcd");
+        $dumpvars(0, fpu_top_tb);
+
+        opcode = 0; start = 0; a = 0; b = 0;
+        repeat(3) @(posedge clk);
+        rst = 0;
+        @(posedge clk);
+
+        // --- TEST ADD: 1.5 + 2.5 = 4.0 ---
+        // 1.5 = 0_01111111_10000000000000000000000 = 32'h3FC00000
+        // 2.5 = 0_10000000_01000000000000000000000 = 32'h40200000
+        $display("=== ADD: 1.5 + 2.5 (expect 4.0 = 0x40800000) ===");
+        apply_op(2'b00, 32'h3FC00000, 32'h40200000);
+        repeat(5) @(posedge clk);
+        $display("result_add = %h", result_add);
+
+        // --- TEST SUB: 3.0 - 1.0 = 2.0 ---
+        // 3.0 = 32'h40400000, 1.0 = 32'h3F800000
+        $display("=== SUB: 3.0 - 1.0 (expect 2.0 = 0x40000000) ===");
+        apply_op(2'b01, 32'h40400000, 32'h3F800000);
+        repeat(5) @(posedge clk);
+        $display("result_sub = %h", result_sub);
+
+        // --- TEST MUL: 2.0 * 3.0 = 6.0 ---
+        // 2.0 = 32'h40000000, 3.0 = 32'h40400000
+        $display("=== MUL: 2.0 * 3.0 (expect 6.0 = 0x40C00000) ===");
+        apply_op(2'b10, 32'h40000000, 32'h40400000);
+        repeat(4) @(posedge clk);
+        $display("result_mul = %h", result_mul);
+
+        // --- TEST DIV: 6.0 / 2.0 = 3.0 ---
+        // 6.0 = 32'h40C00000, 2.0 = 32'h40000000
+        $display("=== DIV: 6.0 / 2.0 (expect 3.0 = 0x40400000) ===");
+        apply_op(2'b11, 32'h40C00000, 32'h40000000);
+        // Chờ valid_out từ bộ chia (13 cycles)
+        for (cyc = 0; cyc < 20; cyc = cyc + 1) begin
+            @(posedge clk);
+            if (valid_div) begin
+                $display("result_div = %h (valid at cycle %0d)", result_div, cyc);
+                cyc = 20; // break
+            end
+        end
+
+        $display("=== SIM DONE ===");
+        #20 $finish;
+    end
+
+endmodule

@@ -1,0 +1,142 @@
+// =============================================================
+// File: fpu_top.v
+// Mô tả: Floating-Point Unit (FPU) top-level
+//
+// Bao gồm 4 functional units độc lập:
+//   - u_add  : Bộ cộng (addition_subtraction, op_sub = 0 cố định)
+//   - u_sub  : Bộ trừ  (addition_subtraction, op_sub = 1 cố định)
+//   - u_mul  : Bộ nhân (fp_mul)
+//   - u_div  : Bộ chia (fp_div_goldschmidt)
+//
+// Opcode (2-bit):
+//   2'b00 → ADD
+//   2'b01 → SUB
+//   2'b10 → MUL
+//   2'b11 → DIV
+//
+// 4 kết quả luôn sẵn ở output; result_sel chọn kết quả active.
+//
+// Latency từng unit:
+//   ADD / SUB : 4 cycles  (4-stage pipeline trong addition_subtraction)
+//   MUL       : 3 cycles  (fp_mul 3-stage pipeline)
+//   DIV       : 13 cycles (fp_div_goldschmidt, valid_out báo hiệu)
+// =============================================================
+
+module fpu_top (
+    input         clk,
+    input         rst,
+
+    // Control
+    input  [1:0]  opcode,   // 00=ADD, 01=SUB, 10=MUL, 11=DIV
+    input         start,    // kích hoạt phép chia (dùng cho DIV unit)
+
+    // Operands
+    input  [31:0] a,
+    input  [31:0] b,
+
+    // 4 kết quả song song
+    output [31:0] result_add,   // kết quả bộ cộng
+    output [31:0] result_sub,   // kết quả bộ trừ
+    output [31:0] result_mul,   // kết quả bộ nhân
+    output [31:0] result_div,   // kết quả bộ chia
+    output        valid_div,    // valid strobe của bộ chia
+
+    // Kết quả được chọn theo opcode (latency match với từng unit)
+    output reg [31:0] result_sel,
+    output reg        valid_sel  // luôn 1 với ADD/SUB/MUL; = valid_div với DIV
+);
+
+    // ----------------------------------------------------------
+    // Bộ CỘNG: op_sub = 1'b0 cố định
+    // ----------------------------------------------------------
+    addition_subtraction u_add (
+        .clk    (clk),
+        .op_sub (1'b0),
+        .a      (a),
+        .b      (b),
+        .out    (result_add)
+    );
+
+    // ----------------------------------------------------------
+    // Bộ TRỪ: op_sub = 1'b1 cố định
+    // ----------------------------------------------------------
+    addition_subtraction u_sub (
+        .clk    (clk),
+        .op_sub (1'b1),
+        .a      (a),
+        .b      (b),
+        .out    (result_sub)
+    );
+
+    // ----------------------------------------------------------
+    // Bộ NHÂN
+    // ----------------------------------------------------------
+    fp_mul u_mul (
+        .clk     (clk),
+        .floatA  (a),
+        .floatB  (b),
+        .result  (result_mul)
+    );
+
+    // ----------------------------------------------------------
+    // Bộ CHIA (Goldschmidt, có rst và start)
+    // ----------------------------------------------------------
+    fp_div_goldschmidt u_div (
+        .clk       (clk),
+        .rst       (rst),
+        .start     (start),
+        .floatA    (a),
+        .floatB    (b),
+        .result    (result_div),
+        .valid_out (valid_div)
+    );
+
+    // ----------------------------------------------------------
+    // Chuyển opcode qua pipeline để align với latency từng unit
+    //
+    // ADD/SUB latency = 4 cycles → delay opcode 4 stages
+    // MUL     latency = 3 cycles → delay opcode 3 stages
+    // DIV     latency = 13 cycles → dùng valid_div trực tiếp
+    //
+    // Cách đơn giản: dùng shift register 4 stages cho opcode,
+    // mỗi unit lấy tap tương ứng.
+    // ----------------------------------------------------------
+
+    // 4-stage opcode shift register (cho ADD / SUB)
+    reg [1:0] op_pipe [1:4];
+    integer i;
+    always @(posedge clk) begin
+        op_pipe[1] <= opcode;
+        for (i = 2; i <= 4; i = i + 1)
+            op_pipe[i] <= op_pipe[i-1];
+    end
+
+    // tap cho MUL (3 cycles)
+    wire [1:0] op_at_mul = op_pipe[3];
+    // tap cho ADD/SUB (4 cycles)
+    wire [1:0] op_at_addsub = op_pipe[4];
+
+    // ----------------------------------------------------------
+    // result_sel: ghép kết quả active từ đơn vị đã xong
+    // Với ADD/SUB/MUL, valid_sel = 1 sau đủ latency.
+    // Với DIV, valid_sel = valid_div.
+    // ----------------------------------------------------------
+
+    // Phát hiện opcode nào đang tới output ở mỗi stage
+    always @(posedge clk) begin
+        case (op_at_addsub)
+            2'b00: begin result_sel <= result_add; valid_sel <= 1'b1; end
+            2'b01: begin result_sel <= result_sub; valid_sel <= 1'b1; end
+            default: begin
+                // MUL hoặc DIV: do MUL có latency 3 ta dùng op_at_mul
+                // DIV dùng valid_div
+                case (op_at_mul)
+                    2'b10: begin result_sel <= result_mul; valid_sel <= 1'b1;     end
+                    2'b11: begin result_sel <= result_div; valid_sel <= valid_div; end
+                    default: begin result_sel <= 32'b0;   valid_sel <= 1'b0;      end
+                endcase
+            end
+        endcase
+    end
+
+endmodule

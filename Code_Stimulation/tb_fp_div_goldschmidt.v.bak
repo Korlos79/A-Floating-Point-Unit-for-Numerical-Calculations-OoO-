@@ -1,0 +1,108 @@
+`timescale 1ns / 1ps
+
+module tb_fp_div_goldschmidt;
+
+    // Khai báo các tín hiệu kết nối với DUT (Device Under Test)
+    reg clk;
+    reg rst;
+    reg start;
+    reg [31:0] floatA;
+    reg [31:0] floatB;
+    wire done;
+    wire [31:0] result;
+
+    // Biến phụ trợ để hiển thị kết quả trong mô phỏng dưới dạng số thập phân
+    real real_A, real_B, real_Res;
+
+    // Khởi tạo DUT
+    fp_div_goldschmidt dut (
+        .clk(clk),
+        .rst(rst),
+        .start(start),
+        .floatA(floatA),
+        .floatB(floatB),
+        .done(done),
+        .result(result)
+    );
+
+    // Tạo xung Clock (Chu kỳ 10ns = 100MHz)
+    always #5 clk = ~clk;
+
+    // Hàm chuyển đổi từ bit IEEE 754 sang số thực real (chỉ dùng cho debug/display)
+    function real bit_to_real;
+        input [31:0] b;
+        reg [7:0] e;
+        reg [22:0] m;
+        reg s;
+        begin
+            s = b[31];
+            e = b[30:23];
+            m = b[22:0];
+            if (e == 0) bit_to_real = 0.0;
+            else bit_to_real = (s ? -1.0 : 1.0) * (1.0 + m / 8388608.0) * (2.0**(e - 127.0));
+        end
+    endfunction
+
+    // Task thực hiện một phép test
+    task test_division;
+        input [31:0] a;
+        input [31:0] b;
+        begin
+            floatA = a;
+            floatB = b;
+            real_A = bit_to_real(a);
+            real_B = bit_to_real(b);
+            
+            @(posedge clk);
+            start = 1;
+            @(posedge clk);
+            start = 0;
+
+            // Đợi cho đến khi tín hiệu done bật lên
+            wait(done);
+            real_Res = bit_to_real(result);
+            
+            $display("--------------------------------------------------");
+            $display("Test: %f / %f", real_A, real_B);
+            $display("Hex Result: %h | Real Result: %f", result, real_Res);
+            $display("Expected: %f", real_A / real_B);
+            @(posedge clk);
+        end
+    endtask
+
+    initial begin
+        // Khởi tạo ban đầu
+        clk = 0;
+        rst = 1;
+        start = 0;
+        floatA = 0;
+        floatB = 0;
+
+        // Reset hệ thống
+        #20 rst = 0;
+        #10;
+
+        // --- CÁC TRƯỜNG HỢP KIỂM THỬ ---
+
+        // TC1: 6.0 / 2.0 = 3.0
+        test_division(32'h40C00000, 32'h40000000);
+
+        // TC2: 10.0 / 5.0 = 2.0
+        test_division(32'h41200000, 32'h40A00000);
+
+        // TC3: 1.0 / 3.0 ≈ 0.333333
+        test_division(32'h3F800000, 32'h40400000);
+
+        // TC4: -15.0 / 3.0 = -5.0
+        test_division(32'hC1700000, 32'h40400000);
+
+        // TC5: 8.4 / 1.2 = 7.0
+        test_division(32'h41066666, 32'h3F99999A);
+
+        #100;
+        $display("--------------------------------------------------");
+        $display("Simulation Finished!");
+        $finish;
+    end
+
+endmodule

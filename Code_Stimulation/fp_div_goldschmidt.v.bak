@@ -1,0 +1,98 @@
+module fp_div_goldschmidt (
+    input clk, rst,
+    input start,
+    input [31:0] floatA, // Tử số N
+    input [31:0] floatB, // Mẫu số D
+    output reg done,
+    output reg [31:0] result
+);
+    // Các hằng số IEEE 754
+    localparam FP_ONE = 32'h3F800000; // 1.0
+    localparam FP_TWO = 32'h40000000; // 2.0
+
+    // Register lưu trữ các giá trị trung gian
+    reg [31:0] reg_N, reg_D, reg_R;
+    reg [31:0] fma_a, fma_b, fma_c;
+    wire [31:0] fma_out;
+
+    // Khởi tạo FMA
+    fp_fma core_fma (
+        .clk(clk),
+        .floatA(fma_a),
+        .floatB(fma_b),
+        .floatC(fma_c),
+        .result(fma_out)
+    );
+
+    // Bảng tra nghịch đảo sơ bộ (ROM 4-bit)
+    function [31:0] get_initial_R;
+        input [31:0] D;
+        begin
+            // Công thức xấp xỉ: R = 2.8235 - 1.8824 * D
+            // Ở đây dùng bảng tra đơn giản để tối ưu tài nguyên
+            get_initial_R = 32'h3F800000; // Mặc định trả về 1.0 (cần thay bằng table thực tế)
+        end
+    endfunction
+
+    reg [3:0] state;
+    localparam IDLE=0, STEP1_N=1, STEP1_D=2, STEP2_R=3, WAIT=4, FINAL=5;
+    reg [1:0] iter_cnt;
+
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            state <= IDLE;
+            done <= 0;
+        end else begin
+            case (state)
+                IDLE: begin
+                    done <= 0;
+                    if (start) begin
+                        reg_N <= floatA;
+                        reg_D <= floatB;
+                        reg_R <= get_initial_R(floatB);
+                        iter_cnt <= 0;
+                        state <= STEP1_N;
+                    end
+                end
+
+                STEP1_N: begin
+                    // N = N * R + 0
+                    fma_a <= reg_N; fma_b <= reg_R; fma_c <= 32'h0;
+                    state <= STEP1_D;
+                end
+
+                STEP1_D: begin
+                    reg_N <= fma_out; // Nhận N mới
+                    // D = D * R + 0
+                    fma_a <= reg_D; fma_b <= reg_R; fma_c <= 32'h0;
+                    state <= STEP2_R;
+                end
+
+                STEP2_R: begin
+                    reg_D <= fma_out; // Nhận D mới
+                    // R_next = 2.0 - D -> Dùng FMA: R = (D * -1.0) + 2.0
+                    fma_a <= fma_out; 
+                    fma_b <= 32'hBF800000; // -1.0
+                    fma_c <= FP_TWO;
+                    
+                    if (iter_cnt == 2'd3) state <= FINAL;
+                    else begin
+                        iter_cnt <= iter_cnt + 1;
+                        state <= WAIT;
+                    end
+                end
+
+                WAIT: begin
+                    reg_R <= fma_out; // Nhận R mới để lặp lại
+                    state <= STEP1_N;
+                end
+
+                FINAL: begin
+                    result <= reg_N;
+                    done <= 1;
+                    state <= IDLE;
+                end
+            endcase
+        end
+    end
+endmodule

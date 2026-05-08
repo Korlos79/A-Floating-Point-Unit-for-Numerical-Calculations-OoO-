@@ -1,0 +1,7 @@
+module compressor_3_2_72bit (
+    input [71:0] a, b, c,
+    output [71:0] s, output [71:0] cy
+);
+    assign s = a ^ b ^ c;
+    assign cy = ((a & b) | (b & c) | (c & a)) << 1; 
+endmodule

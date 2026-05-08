@@ -1,0 +1,37 @@
+module mantissa_multiplier (
+    input clk,
+    input [23:0] A, B,        // Mantissa của số 32-bit (đã thêm bit ẩn)
+    output reg [47:0] Product // Kết quả nhân 48-bit
+);
+    // Giai đoạn 1: Booth Radix-4 Encoding (Giảm số tích riêng xuống còn 12 hàng)
+    // Bài báo Mahendra dùng Radix-4 để giảm Latency
+    wire [47:0] partial_products [0:11]; 
+    
+    // Giả định module Booth_Enc tạo ra các tích riêng dựa trên bộ mã hóa {-2, -1, 0, 1, 2}
+    generate
+        genvar i;
+        for (i = 0; i < 12; i = i + 1) begin : booth_gen
+            booth_radix4_logic stage (
+                .m_in(A),
+                .group(B[2*i+1 : 2*i-1]), // Lấy 3 bit của số nhân (với bit -1 là 0)
+                .p_out(partial_products[i])
+            );
+        end
+    endgenerate
+
+    // Giai đoạn 2: Wallace Tree (Cộng song song các tích riêng)
+    // Bài báo sử dụng cấu trúc cây để đạt độ trễ O(log N)
+    wire [47:0] sum_final, carry_final;
+    wallace_tree_24x24 tree_unit (
+        .pp0(partial_products[0]), .pp1(partial_products[1]), 
+        .pp2(partial_products[2]), .pp3(partial_products[3]),
+        // ... kết nối tất cả 12 hàng tích riêng ...
+        .sum(sum_final),
+        .carry(carry_final)
+    );
+
+    // Giai đoạn 3: Pipeline Register (Chốt kết quả để tăng tần số Fmax)
+    always @(posedge clk) begin
+        Product <= sum_final + carry_final;
+    end
+endmodule

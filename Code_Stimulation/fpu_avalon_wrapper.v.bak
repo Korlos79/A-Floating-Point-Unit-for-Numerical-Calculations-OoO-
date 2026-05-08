@@ -1,0 +1,75 @@
+`timescale 1ns / 1ps
+
+module fpu_avalon_wrapper (
+    input  wire        clk,
+    input  wire        reset_n,
+    
+    // Avalon-MM Slave Interface
+    input  wire [2:0]  avs_address,
+    input  wire        avs_write,
+    input  wire [31:0] avs_writedata,
+    input  wire        avs_read,
+    output reg  [31:0] avs_readdata,
+    output wire        avs_waitrequest
+);
+
+    // Internal Signals
+    reg [31:0] reg_a;
+    reg [31:0] reg_b;
+    reg [2:0]  reg_opcode;
+    reg        fpu_valid_in;
+    
+    wire [31:0] fpu_result;
+    wire        fpu_valid_out;
+
+    // Avalon logic đơn giản, không cần waitrequest (trừ khi tính toán cực lâu mà không dùng buffer)
+    assign avs_waitrequest = 1'b0; 
+
+    // Instantiate FPU Top
+    fpu_top u_fpu (
+        .clk        (clk),
+        .rst_n      (reset_n),
+        .valid_in   (fpu_valid_in),
+        .opcode     (reg_opcode),
+        .a          (reg_a),
+        .b          (reg_b),
+        .result_out (fpu_result),
+        .valid_out  (fpu_valid_out)
+    );
+
+    // Logic Ghi (Write) từ Avalon
+    always @(posedge clk or negedge reset_n) begin
+        if (!reset_n) begin
+            reg_a        <= 32'b0;
+            reg_b        <= 32'b0;
+            reg_opcode   <= 3'b0;
+            fpu_valid_in <= 1'b0;
+        end else begin
+            fpu_valid_in <= 1'b0; // Pulse mặc định
+            
+            if (avs_write) begin
+                case (avs_address)
+                    3'h0: reg_a <= avs_writedata;
+                    3'h1: reg_b <= avs_writedata;
+                    3'h2: begin 
+                        reg_opcode   <= avs_writedata[2:0];
+                        fpu_valid_in <= 1'b1; // Ghi vào thanh ghi Opcode sẽ kích hoạt FPU
+                    end
+                endcase
+            end
+        end
+    end
+
+    // Logic Đọc (Read) từ Avalon
+    always @(*) begin
+        case (avs_address)
+            3'h0: avs_readdata = reg_a;
+            3'h1: avs_readdata = reg_b;
+            3'h2: avs_readdata = {29'b0, reg_opcode};
+            3'h3: avs_readdata = fpu_result;
+            3'h4: avs_readdata = {31'b0, fpu_valid_out}; // Cờ báo hoàn thành
+            default: avs_readdata = 32'hDEADBEEF;
+        endcase
+    end
+
+endmodule

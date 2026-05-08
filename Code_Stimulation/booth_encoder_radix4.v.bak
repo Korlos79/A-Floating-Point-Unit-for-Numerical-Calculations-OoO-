@@ -1,0 +1,17 @@
+module booth_encoder_radix4 (
+    input [23:0] multiplier_bit, // Số bị nhân (A)
+    input [2:0]  code_bits,      // 3 bit từ số nhân (B) để mã hóa
+    output reg [47:0] p_out      // Tích riêng sau mã hóa
+);
+    // Mã hóa dựa trên bảng sự thật Radix-4: {-2, -1, 0, 1, 2}
+    always @(*) begin
+        case (code_bits)
+            3'b000, 3'b111: p_out = 48'b0;                 // 0
+            3'b001, 3'b010: p_out = {{24{multiplier_bit[23]}}, multiplier_bit}; // +1 * A
+            3'b011:         p_out = {{23{multiplier_bit[23]}}, multiplier_bit, 1'b0}; // +2 * A
+            3'b100:         p_out = ~({{23{multiplier_bit[23]}}, multiplier_bit, 1'b0}) + 1'b1; // -2 * A
+            3'b101, 3'b110: p_out = ~({{24{multiplier_bit[23]}}, multiplier_bit}) + 1'b1; // -1 * A
+            default:        p_out = 48'b0;
+        endcase
+    end
+endmodule

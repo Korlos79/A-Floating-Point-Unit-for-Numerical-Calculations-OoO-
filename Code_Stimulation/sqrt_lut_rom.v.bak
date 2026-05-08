@@ -1,0 +1,45 @@
+`timescale 1ns/1ps
+
+module sqrt_lut_rom(
+    input  wire        clk,
+    input  wire [7:0]  lut_idx, // {floatA[23] (e[0]), floatA[22:16]}
+    output reg  [31:0] lut_y0
+);
+    // Khai báo bộ nhớ ROM 256 phần tử, mỗi phần tử 32-bit
+    reg [31:0] rom [0:255];
+
+    // -------------------------------------------------------------
+    // KHỞI TẠO ROM TRỰC TIẾP TRONG VERILOG (KHÔNG CẦN PYTHON)
+    // -------------------------------------------------------------
+    integer i;
+    reg [7:0]  exp_val;
+    reg [6:0]  mant_val;
+    reg [31:0] X_hex;
+
+    initial begin
+        // Phần mềm tổng hợp sẽ chạy vòng lặp này lúc compile mạch 
+        // để tự động tính toán và nạp cứng 256 giá trị vào LUT ROM.
+        for (i = 0; i < 256; i = i + 1) begin
+            // 1. Phục dựng lại giá trị Float X gốc
+            // bit 7 = 1 -> Dải [1, 2) (Mũ = 127)
+            // bit 7 = 0 -> Dải [2, 4) (Mũ = 128)
+            exp_val  = i[7] ? 8'd127 : 8'd128;
+            mant_val = i[6:0];
+            
+            // Lắp ráp thành Float 32-bit. Cộng 0.5 ULP (0x8000) để lấy mốc giữa dải.
+            X_hex = {1'b0, exp_val, mant_val, 16'd0} | 32'h00008000;
+            
+            // 2. Thuật toán Fast Inverse Square Root (Quake 3 Magic Number)
+            // Tính Y0 = 1/sqrt(X) hoàn toàn bằng dịch bit (Cực nhanh & hiệu quả)
+            rom[i] = 32'h5F375A86 - (X_hex >> 1);
+        end
+    end
+
+    // -------------------------------------------------------------
+    // HOẠT ĐỘNG ĐỌC ROM CHÍNH
+    // -------------------------------------------------------------
+    always @(posedge clk) begin
+        lut_y0 <= rom[lut_idx]; // Lấy giá trị ra với độ trễ 1 chu kỳ
+    end
+
+endmodule

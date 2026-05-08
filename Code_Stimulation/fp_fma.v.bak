@@ -1,0 +1,85 @@
+module fp_fma (
+    input clk,
+    input [31:0] floatA, floatB, floatC,
+    output reg [31:0] result
+);
+    // --- TẦNG 1: UNPACK & MULTIPLY ---
+    wire sA = floatA[31], sB = floatB[31], sC = floatC[31];
+    wire [7:0] eA = floatA[30:23], eB = floatB[30:23], eC = floatC[30:23];
+    wire [23:0] mA = (eA == 0) ? {1'b0, floatA[22:0]} : {1'b1, floatA[22:0]};
+    wire [23:0] mB = (eB == 0) ? {1'b0, floatB[22:0]} : {1'b1, floatB[22:0]};
+    wire [23:0] mC = (eC == 0) ? {1'b0, floatC[22:0]} : {1'b1, floatC[22:0]};
+
+    wire [47:0] prod_m;
+    wire prod_s = sA ^ sB;
+    wire [8:0] prod_e = eA + eB - 8'd127;
+
+    // Tái sử dụng bộ nhân Booth/Wallace của bạn
+    mantissa_multiplier mul_inst (
+        .clk(clk), .A(mA), .B(mB), .Product(prod_m)
+    );
+
+    // --- TẦNG 2: EXPONENT COMPARE & ALIGN ---
+    reg [8:0] e_res;
+    reg [72:0] m_add_1, m_add_2; // Mở rộng bit để tránh mất dữ liệu khi dịch
+    reg s_res_sign, sC_d1;
+    reg [47:0] prod_m_d1;
+    reg [8:0] exp_diff;
+
+    always @(posedge clk) begin
+        prod_m_d1 <= prod_m;
+        sC_d1 <= sC;
+        
+        if (prod_e > eC) begin
+            e_res <= prod_e;
+            exp_diff <= prod_e - eC;
+            m_add_1 <= {prod_m, 24'b0}; // Tích giữ nguyên
+            m_add_2 <= {mC, 48'b0} >> (prod_e - eC); // Dịch C
+            s_res_sign <= prod_s;
+        end else begin
+            e_res <= eC;
+            exp_diff <= eC - prod_e;
+            m_add_1 <= {prod_m, 24'b0} >> (eC - prod_e); // Dịch Tích
+            m_add_2 <= {mC, 48'b0}; // C giữ nguyên
+            s_res_sign <= sC;
+        end
+    end
+
+    // --- TẦNG 3: ADDER ---
+    reg [73:0] sum_m;
+    reg final_sign;
+    reg [8:0] e_res_d2;
+
+    always @(posedge clk) begin
+        e_res_d2 <= e_res;
+        // Kiểm tra dấu để thực hiện cộng hoặc trừ định trị
+        if (prod_s == sC_d1) begin
+            sum_m <= m_add_1 + m_add_2;
+            final_sign <= sC_d1;
+        end else begin
+            if (m_add_1 > m_add_2) begin
+                sum_m <= m_add_1 - m_add_2;
+                final_sign <= prod_s;
+            end else begin
+                sum_m <= m_add_2 - m_add_1;
+                final_sign <= sC_d1;
+            end
+        end
+    end
+
+    // --- TẦNG 4: NORMALIZE & PACK ---
+    wire [22:0] f_mant;
+    wire [7:0] f_exp;
+    
+    // Logic chuẩn hóa đơn giản (cần thêm leading zero detector để tối ưu hơn)
+    assign f_mant = sum_m[71] ? sum_m[70:48] : sum_m[69:47];
+    assign f_exp  = sum_m[71] ? (e_res_d2 + 1) : e_res_d2;
+
+    always @(posedge clk) begin
+        if (sum_m == 0)
+            result <= 32'b0;
+        else
+            result <= {final_sign, f_exp, f_mant};
+    end
+
+endmodule
